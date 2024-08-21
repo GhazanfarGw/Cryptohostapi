@@ -24,7 +24,7 @@ dotenv.config();
 // app.use(limiter);
 
 const app = express();
-const port = process.env.PORT || 3000;
+const PORT = process.env.PORT || 4000;
 
 // Alchemy API setup
 const ALCHEMY_API_KEY = `Ozfc-D4CGAIFT9ByPS6jRsVkAzDuBImL`;
@@ -666,7 +666,6 @@ app.get('/data', async (req, res) => {
 });
 
 // Server start
-const PORT = process.env.PORT || 4000;
 app.listen(PORT, '0.0.0.0', () => {
     console.log(`Server is running and accessible via IP on port ${PORT}`);
 });
