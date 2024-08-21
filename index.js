@@ -665,9 +665,10 @@ app.get('/data', async (req, res) => {
     }
 });
 
-// Start the server
-app.listen(port, () => {
-    console.log(`Server running on port ${port}`);
+// Server start
+const PORT = process.env.PORT || 4000;
+app.listen(PORT, '0.0.0.0', () => {
+    console.log(`Server is running and accessible via IP on port ${PORT}`);
 });
 
 // const express = require('express');
