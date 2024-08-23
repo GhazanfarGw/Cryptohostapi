@@ -6,6 +6,7 @@ const crypto = require('crypto');
 const dotenv = require('dotenv');
 const { createAlchemyWeb3 } = require('@alch/alchemy-web3');
 const mongoose = require('mongoose');
+const winston = require('winston');
 const { ChainId, Fetcher, Route, Trade, TokenAmount, TradeType, Percent } = require('@uniswap/sdk');
 const multer = require('multer');
 const fs = require('fs').promises; // Use fs.promises for async file operations
@@ -15,6 +16,8 @@ const path = require('path');
 dotenv.config();
 
 const app = express();
+const PORT = process.env.PORT || 4000;
+
 // Alchemy API setup
 const ALCHEMY_API_KEY = process.env.ALCHEMY_API_KEY;
 const ALCHEMY_API_URL = `https://eth-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`;
@@ -26,17 +29,29 @@ const BINANCE_SECRET_KEY = process.env.BINANCE_SECRET_KEY;
 const BINANCE_CONVERT_URL = 'https://api.binance.com/sapi/v1/convert/getQuote';
 
 // MongoDB setup
-const MONGODB_URL = process.env.MONGODB_URL;
+const MONGO_URI = 'mongodb+srv://ghazanfarblinktader:rc4BuaN5flv7B7j4@serverdata.bxgbx.mongodb.net/crypto_host_data?retryWrites=true&w=majority';
+// MongoDB connection
+mongoose.connect(MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
+  .then(() => console.log('MongoDB connected'))
+  .catch(err => console.log('MongoDB connection error:', err));
 
-if (!MONGODB_URL) {
-    throw new Error('MongoDB URI is not defined in the environment variables');
-}
-mongoose.connect(MONGODB_URL, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true
-})
-.then(() => console.log('MongoDB connected'))
-.catch(err => console.error('MongoDB connection error:', err));
+// Define a message schema and model
+const messageSchema = new mongoose.Schema({
+  message: String,
+  timestamp: { type: Date, default: Date.now }
+});
+
+const Message = mongoose.model('Message', messageSchema);
+
+// Setup logger
+const logger = winston.createLogger({
+  level: 'info',
+  format: winston.format.json(),
+  transports: [
+    new winston.transports.Console(),
+    new winston.transports.File({ filename: 'server.log' })
+  ]
+});
 
 // Wallet setup
 const SENDER_ADDRESS = process.env.SENDER_ADDRESS; // The address from which funds are sent
@@ -64,6 +79,7 @@ const USDT_CONTRACT_ABI = [
 
 // Middleware to parse JSON bodies
 app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
 
 // Function to fetch live ETH price in specified fiat currency
 async function fetchETHPrice(currency) {
@@ -295,23 +311,6 @@ async function transferUSDT(recipientAddress, usdtAmount) {
     return receipt;
 }
 
-// Transaction model for MongoDB
-const transactionSchema = new mongoose.Schema({
-    amount: Number,
-    currency: String,
-    transaction_reference: String,
-    transaction_id: String,
-    transactionCode: String,
-    transferCode: String,
-    accessCode: String,
-    interbankBlockingCode: String,
-    finalBlockCode: String,
-    timestamp: { type: Date, default: Date.now },
-    globalServerResponse: mongoose.Schema.Types.Mixed
-});
-
-const Transaction = mongoose.model('Transaction', transactionSchema);
-
 // POST route to handle transactions
     app.post('/transaction', async (req, res) => {
         // Directly destructure fields from req.body
@@ -431,6 +430,7 @@ app.get('/ping', (req, res) => {
         message: 'Server is up and running',
         environmentVariables: {
             currentTime,
+            SERVER_URL,
             ALCHEMY_API_KEY,
             ALCHEMY_API_URL,
             SENDER_ADDRESS,
@@ -451,29 +451,35 @@ app.get('/', (req, res) => {
 
 // Endpoint to receive and save messages
 app.post('/sendData', async (req, res) => {
+    const { message } = req.body;
+    
+    if (!message) {
+        console.warn('No message provided');
+        return res.status(400).json({ success: false, message: 'Message is required' });
+    }
+
     try {
-        const { text } = req.body;
-        const message = new Message({ text });
-        await message.save();
-        res.status(201).json({ status: 'success', message: 'Message saved successfully' });
-    } catch (error) {
-        console.error('Error saving message:', error.message);
-        res.status(500).json({ error: 'Internal Server Error' });
+        const newMessage = new Message({ message: message });
+        await newMessage.save();
+        console.info('Message saved successfully');
+        res.json({ success: true, message: 'Message saved successfully' });
+    } catch (err) {
+        console.error('Error saving message:', err);
+        res.status(500).json({ success: false, message: 'Failed to save message', error: err.message });
     }
 });
 
-// Retrieve messages
+// Endpoint to retrieve messages
 app.get('/data', async (req, res) => {
-    try {
-        const messages = await Message.find();
-        res.json({ status: 'success', messages });
-    } catch (error) {
-        console.error('Error retrieving messages:', error.message);
-        res.status(500).json({ error: 'Internal Server Error' });
-    }
+  try {
+    const messages = await Message.find();
+    res.json({ success: true, messages });
+  } catch (err) {
+    logger.error('Error retrieving messages:', err.message);
+    res.status(500).json({ success: false, message: 'Failed to retrieve messages' });
+  }
 });
 
-const PORT = process.env.PORT || 4000;
 // Start the server
 app.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
