@@ -16,7 +16,7 @@ const path = require('path');
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 4000;
+const PORT = process.env.PORT || 3000;
 
 // Alchemy API setup
 const ALCHEMY_API_KEY = process.env.ALCHEMY_API_KEY;
