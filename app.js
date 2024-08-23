@@ -15,8 +15,6 @@ const path = require('path');
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 4000;
-
 // Alchemy API setup
 const ALCHEMY_API_KEY = process.env.ALCHEMY_API_KEY;
 const ALCHEMY_API_URL = `https://eth-mainnet.g.alchemy.com/v2/${ALCHEMY_API_KEY}`;
@@ -476,6 +474,6 @@ app.get('/data', async (req, res) => {
 });
 
 // Start the server
-app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+app.listen(80, () => {
+    console.log('Server running at http://34.241.38.94');
 });
