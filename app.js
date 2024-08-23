@@ -473,7 +473,8 @@ app.get('/data', async (req, res) => {
     }
 });
 
+const PORT = process.env.PORT || 4000;
 // Start the server
-app.listen(80, () => {
-    console.log('Server running at http://34.241.38.94');
+app.listen(PORT, () => {
+    console.log(`Server running on port ${PORT}`);
 });
