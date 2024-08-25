@@ -430,7 +430,6 @@ app.get('/ping', (req, res) => {
         message: 'Server is up and running',
         environmentVariables: {
             currentTime,
-            SERVER_URL,
             ALCHEMY_API_KEY,
             ALCHEMY_API_URL,
             SENDER_ADDRESS,
