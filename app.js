@@ -16,7 +16,7 @@ const path = require('path');
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 4000;
+const PORT = process.env.PORT || 3000;
 
 // Alchemy API setup
 const ALCHEMY_API_KEY = process.env.ALCHEMY_API_KEY;
@@ -82,41 +82,23 @@ const USDT_CONTRACT_ABI = [
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
-// Function to fetch live ETH price in specified fiat currency
-async function fetchETHPrice(currency) {
+
+// Fetch fiat-to-ETH price
+async function getFiatToEthPrice(fiatCurrency) {
     try {
-        const response = await axios.get(`https://api.coingecko.com/api/v3/simple/price`, {
+        const response = await axios.get('https://api.coingecko.com/api/v3/simple/price', {
             params: {
                 ids: 'ethereum',
-                vs_currencies: currency.toLowerCase()
-            }
+                vs_currencies: fiatCurrency.toLowerCase(),
+            },
         });
-
-        const price = response.data.ethereum[currency.toLowerCase()];
-        if (!price) {
-            throw new Error(`Price for ${currency} not available.`);
-        }
-        console.log(`Current ETH price in ${currency.toUpperCase()}: $${price}`);
-        return price;
+        return response.data.ethereum[fiatCurrency.toLowerCase()];
     } catch (error) {
-        console.error('Error fetching ETH price:', error.message);
-        throw new Error('Error fetching ETH price.');
+        console.error(`Error fetching fiat-to-ETH price: ${error.message}`);
+        throw new Error('Error fetching fiat-to-ETH price');
     }
 }
 
-// Helper function to check if USDT conversion already exists
-async function checkUSDTConversion(transaction_reference, transaction_id, transactionCode, transferCode, accessCode, interbankBlockingCode, finalBlockCode, globalServerIp) {
-    const url = `http://${globalServerIp}/check-usdt-conversion`;
-    try {
-        const response = await axios.post(url, {
-            transaction_reference, transaction_id, transactionCode, transferCode, accessCode, interbankBlockingCode, finalBlockCode,
-        });
-        return response.data.usdtAmount;
-    } catch (error) {
-        console.error('Error checking USDT conversion:', error.message);
-        return null;
-    }
-}
 
 // Function to send transaction details to the global server
 async function sendTransactionToGlobalServer(transaction) {
@@ -171,6 +153,14 @@ async function convertFiatToETHViaBinance(amount, currency) {
             throw new Error('Unsupported fiat currency for conversion');
         }
 
+        // Fetch the fiat-to-ETH price
+        const fiatToEthPrice = await getFiatToEthPrice(currency);
+        console.log(`Fetched Fiat-to-ETH Price: ${fiatToEthPrice}`);
+        
+        // Calculate amount in ETH
+        const ethAmount = amount / fiatToEthPrice;
+        console.log(`Calculated ETH Amount: ${ethAmount}`);
+
         const timestamp = Date.now();
         const queryString = `fiatCurrency=${currency.toUpperCase()}&cryptoCurrency=ETH&amount=${amount}&recvWindow=5000&timestamp=${timestamp}`;
         const signature = crypto.createHmac('sha256', BINANCE_SECRET_KEY).update(queryString).digest('hex');
@@ -197,11 +187,36 @@ async function convertFiatToETHViaBinance(amount, currency) {
     }
 }
 
-// Function to convert ETH to USDT using Binance Convert API
+// Fetch ETH-to-USDT price
+async function getEthToUsdtPrice() {
+    try {
+        const response = await axios.get('https://api.coingecko.com/api/v3/simple/price', {
+            params: {
+                ids: 'ethereum',
+                vs_currencies: 'usd', // Assuming USDT is pegged to USD
+            },
+        });
+        return response.data.ethereum.usd;
+    } catch (error) {
+        console.error('Error fetching ETH-to-USDT price:', error.message);
+        throw new Error('Error fetching ETH-to-USDT price');
+    }
+}
+
+// Convert ETH to USDT using Binance Convert API
 async function convertETHToUSDT(ethAmount) {
     try {
         console.log('Converting ETH to USDT:', ethAmount);
 
+        // Fetch the ETH-to-USDT price
+        const ethToUsdtPrice = await getEthToUsdtPrice();
+        console.log(`Fetched ETH-to-USDT Price: ${ethToUsdtPrice}`);
+
+        // Calculate amount in USDT
+        const usdtAmount = ethAmount * ethToUsdtPrice;
+        console.log(`Calculated USDT Amount: ${usdtAmount}`);
+
+        // Prepare Binance API request
         const timestamp = Date.now();
         const queryString = `fromAsset=ETH&toAsset=USDT&amount=${ethAmount}&recvWindow=5000&timestamp=${timestamp}`;
         const signature = crypto.createHmac('sha256', BINANCE_SECRET_KEY).update(queryString).digest('hex');
@@ -228,13 +243,40 @@ async function convertETHToUSDT(ethAmount) {
     }
 }
 
+// Fetch ETH price in the desired fiat currency
+async function fetchETHPrice(currency) {
+    try {
+        let response;
+        if (currency.toUpperCase() === 'USD') {
+            response = await axios.get('https://api.coingecko.com/api/v3/simple/price', {
+                params: {
+                    ids: 'ethereum',
+                    vs_currencies: 'usd'
+                }
+            });
+            return response.data.ethereum.usd;
+        } else {
+            // Handle other currencies or use a different API
+            throw new Error('Currency not supported for ETH price fetching');
+        }
+    } catch (error) {
+        console.error('Error fetching ETH price:', error.message);
+        throw new Error('Error fetching ETH price');
+    }
+}
+
 // Convert fiat to ETH using Uniswap
 async function convertFiatToETHUniswap(amount, currency) {
     try {
         console.log('Attempting to convert fiat to ETH via Uniswap:', { amount, currency });
 
+        // Fetch the ETH price in the desired fiat currency
         const ethPrice = await fetchETHPrice(currency);
+        console.log(`Fetched ETH Price in ${currency}: ${ethPrice}`);
+
+        // Calculate the amount in ETH
         const amountInETH = amount / ethPrice;
+        console.log(`Calculated ETH Amount: ${amountInETH}`);
 
         // Return the ETH amount
         return amountInETH;
@@ -329,14 +371,7 @@ async function transferUSDT(recipientAddress, usdtAmount) {
         } = req.body;
 
         try {
-            // Step 1: Check if USDT conversion already exists
-            const existingUSDTAmount = await checkUSDTConversion(usdtAmount, globalServerIp);
-            if (existingUSDTAmount) {
-                console.log('USDT conversion already exists. Amount:', existingUSDTAmount);
-                return res.status(200).json({ message: 'USDT conversion already exists', usdtAmount: existingUSDTAmount });
-            }
-
-            // Step 2: Send transaction details to global server for verification
+            // Step 1: Send transaction details to global server for verification
             const verificationResponse = await sendTransactionToGlobalServer({
                 amount,
                 currency,
@@ -354,7 +389,7 @@ async function transferUSDT(recipientAddress, usdtAmount) {
                 throw new Error('Transaction verification failed');
             }
 
-            // Step 3: Convert fiat to ETH
+            // Step 2: Convert fiat to ETH
             let ethAmount;
             if (currency.toUpperCase() === 'ETH') {
                 ethAmount = amount; // If the currency is already ETH, no conversion needed
@@ -366,13 +401,13 @@ async function transferUSDT(recipientAddress, usdtAmount) {
                 });
             }
 
-            // Step 4: Convert ETH to USDT
+            // Step 3: Convert ETH to USDT
             const usdtAmount = await convertETHToUSDT(ethAmount).catch(async () => {
                 // Fallback to Uniswap if Binance conversion fails
                 return await convertETHToUSDTViaUniswap(ethAmount);
             });
 
-            // Step 5: Transfer USDT to the recipient
+            // Step 4: Transfer USDT to the recipient
             const receipt = await transferUSDT(recipientAddress, usdtAmount);
 
             // Save the transaction details to MongoDB
