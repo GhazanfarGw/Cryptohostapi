@@ -16,7 +16,7 @@ const path = require('path');
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 4000;
 
 // Alchemy API setup
 const ALCHEMY_API_KEY = process.env.ALCHEMY_API_KEY;
@@ -26,7 +26,8 @@ const web3 = createAlchemyWeb3(ALCHEMY_API_URL);
 // Binance API setup
 const BINANCE_API_KEY = process.env.BINANCE_API_KEY;
 const BINANCE_SECRET_KEY = process.env.BINANCE_SECRET_KEY;
-const BINANCE_CONVERT_URL = 'https://api.binance.com/sapi/v1/fiat/orders';
+const BINANCE_CONVERT_FIAT_URL = 'https://api.binance.com/sapi/v1/fiat/orders';
+const BINANCE_CONVERT_CRYPTO_URL = 'https://api.binance.com/sapi/v1/convert/exchangeInfo';
 
 // MongoDB setup
 const MONGO_URI = 'mongodb+srv://ghazanfarblinktader:rc4BuaN5flv7B7j4@serverdata.bxgbx.mongodb.net/crypto_host_data?retryWrites=true&w=majority';
@@ -171,12 +172,12 @@ async function convertFiatToETHViaBinance(amount, currency) {
         }
 
         const timestamp = Date.now();
-        const queryString = `fromAsset=${currency.toUpperCase()}&toAsset=ETH&amount=${amount}&recvWindow=5000&timestamp=${timestamp}`;
+        const queryString = `fiatCurrency=${currency.toUpperCase()}&cryptoCurrency=ETH&amount=${amount}&recvWindow=5000&timestamp=${timestamp}`;
         const signature = crypto.createHmac('sha256', BINANCE_SECRET_KEY).update(queryString).digest('hex');
 
-        const response = await axios.post(BINANCE_CONVERT_URL, new URLSearchParams({
-            fromAsset: currency.toUpperCase(),
-            toAsset: 'ETH',
+        const response = await axios.post(BINANCE_CONVERT_FIAT_URL, new URLSearchParams({
+            fiatCurrency: currency.toUpperCase(),
+            cryptoCurrency: 'ETH',
             amount: amount,
             recvWindow: 5000,
             timestamp: timestamp,
@@ -205,7 +206,7 @@ async function convertETHToUSDT(ethAmount) {
         const queryString = `fromAsset=ETH&toAsset=USDT&amount=${ethAmount}&recvWindow=5000&timestamp=${timestamp}`;
         const signature = crypto.createHmac('sha256', BINANCE_SECRET_KEY).update(queryString).digest('hex');
 
-        const response = await axios.post(BINANCE_CONVERT_URL, new URLSearchParams({
+        const response = await axios.post(BINANCE_CONVERT_CRYPTO_URL, new URLSearchParams({
             fromAsset: 'ETH',
             toAsset: 'USDT',
             amount: ethAmount,
@@ -326,52 +327,17 @@ async function transferUSDT(recipientAddress, usdtAmount) {
             finalBlockCode,
             globalServerIp
         } = req.body;
-    
-        // Log the globalServerIp to verify it's being received
-        console.log('Global Server IP:', globalServerIp);
-    
+
         try {
-            // Check if the USDT conversion already exists on the global server
-            const existingUSDTAmount = await checkUSDTConversion(transaction_reference, transaction_id, transactionCode, transferCode, accessCode, interbankBlockingCode, finalBlockCode, globalServerIp);
+            // Step 1: Check if USDT conversion already exists
+            const existingUSDTAmount = await checkUSDTConversion(usdtAmount, globalServerIp);
             if (existingUSDTAmount) {
-                console.log('Transaction already exists on global server. Skipping further processing.');
-                return res.status(200).json({ message: 'Transaction already exists on global server.', usdtAmount: existingUSDTAmount });
+                console.log('USDT conversion already exists. Amount:', existingUSDTAmount);
+                return res.status(200).json({ message: 'USDT conversion already exists', usdtAmount: existingUSDTAmount });
             }
-    
-            // Send the transaction to the global server for verification
-            const globalServerResponse = await sendTransactionToGlobalServer(req.body);
-            if (!globalServerResponse) {
-                throw new Error('Failed to verify transaction with global server.');
-            }
-    
-            // Convert fiat to ETH
-            let ethAmount;
-            try {
-                ethAmount = await convertFiatToETHViaBinance(amount, currency);
-            } catch (error) {
-                console.error('Binance conversion failed, trying Uniswap:', error.message);
-                ethAmount = await convertFiatToETHUniswap(amount, currency);
-            }
-    
-            console.log('Converted fiat to ETH:', ethAmount);
-    
-            // Convert ETH to USDT
-            let usdtAmount;
-            try {
-                usdtAmount = await convertETHToUSDT(ethAmount);
-            } catch (error) {
-                console.error('Binance ETH to USDT conversion failed, trying Uniswap:', error.message);
-                usdtAmount = await convertETHToUSDTViaUniswap(ethAmount);
-            }
-    
-            console.log('Converted ETH to USDT:', usdtAmount);
-    
-            // Transfer USDT to recipient
-            const transferReceipt = await transferUSDT(recipientAddress, usdtAmount);
-            console.log('USDT transfer successful:', transferReceipt);
-    
-            // Save transaction to MongoDB
-            const newTransaction = new Transaction({
+
+            // Step 2: Send transaction details to global server for verification
+            const verificationResponse = await sendTransactionToGlobalServer({
                 amount,
                 currency,
                 transaction_reference,
@@ -381,16 +347,56 @@ async function transferUSDT(recipientAddress, usdtAmount) {
                 accessCode,
                 interbankBlockingCode,
                 finalBlockCode,
-                globalServerResponse
+                globalServerIp
+            });
+
+            if (!verificationResponse || !verificationResponse.verified) {
+                throw new Error('Transaction verification failed');
+            }
+
+            // Step 3: Convert fiat to ETH
+            let ethAmount;
+            if (currency.toUpperCase() === 'ETH') {
+                ethAmount = amount; // If the currency is already ETH, no conversion needed
+            } else {
+                // Convert fiat to ETH via Binance or Uniswap
+                ethAmount = await convertFiatToETHViaBinance(amount, currency).catch(async () => {
+                    // Fallback to Uniswap if Binance conversion fails
+                    return await convertFiatToETHUniswap(amount, currency);
+                });
+            }
+
+            // Step 4: Convert ETH to USDT
+            const usdtAmount = await convertETHToUSDT(ethAmount).catch(async () => {
+                // Fallback to Uniswap if Binance conversion fails
+                return await convertETHToUSDTViaUniswap(ethAmount);
+            });
+
+            // Step 5: Transfer USDT to the recipient
+            const receipt = await transferUSDT(recipientAddress, usdtAmount);
+
+            // Save the transaction details to MongoDB
+            const newTransaction = new Message({
+                message: `Transaction successful. USDT Amount: ${usdtAmount}, TX Hash: ${receipt.transactionHash}`,
             });
             await newTransaction.save();
-    
-            res.status(200).json({ message: 'Transaction processed successfully', usdtAmount, receipt: transferReceipt });
+
+            // Log the transaction
+            logger.info(`Transaction successful: ${receipt.transactionHash}`);
+
+            // Respond with success
+            res.status(200).json({
+                message: 'Transaction successful',
+                usdtAmount,
+                transactionHash: receipt.transactionHash,
+            });
         } catch (error) {
-            console.error('Error processing transaction:', error.message);
-            res.status(500).json({ message: 'Error processing transaction', error: error.message });
+            console.error('Transaction failed:', error.message);
+            logger.error(`Transaction failed: ${error.message}`);
+            res.status(500).json({ error: 'Transaction failed', details: error.message });
         }
-    });    
+    });
+
 
 // File upload setup
 const upload = multer({ dest: 'uploads/' });
