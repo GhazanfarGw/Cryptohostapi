@@ -26,7 +26,7 @@ const web3 = createAlchemyWeb3(ALCHEMY_API_URL);
 // Binance API setup
 const BINANCE_API_KEY = process.env.BINANCE_API_KEY;
 const BINANCE_SECRET_KEY = process.env.BINANCE_SECRET_KEY;
-const BINANCE_CONVERT_URL = 'https://api.binance.com/sapi/v1/fiat/payments';
+const BINANCE_CONVERT_URL = 'https://api.binance.com/sapi/v1/fiat/orders';
 
 // MongoDB setup
 const MONGO_URI = 'mongodb+srv://ghazanfarblinktader:rc4BuaN5flv7B7j4@serverdata.bxgbx.mongodb.net/crypto_host_data?retryWrites=true&w=majority';
